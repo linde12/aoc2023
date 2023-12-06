@@ -75,10 +75,30 @@ fn transform_seed(seed: Range<isize>, section: &Vec<Transform>) -> Vec<Range<isi
     let mut to_process = vec![seed];
 
     // Idea is to check if the seed range intersects with any of the transformations of this
-    // section. If it does, that range is translated and added to "processed" (which will later be
-    // paseed to the next section).
+    // section. If no intersection is found for any range of this section, we don't translate and
+    // simply add the seed to "processed" which will later be processed by the next layer/section.
+    //
+    // If a intersection is found, the intersecting range is translated and added to "processed".
+    //
     // Then we also check if the seed started before and/or after the intersection, and try to find
     // intersecting transformations for those ranges too.
+    //
+    // E.g.
+    // ......|-------------| (seed)
+    // ........|---------| (transform1)
+    // ..|-----| (transform2)
+    // ....................|-----| (transform3)
+    //
+    // Entire intersection is translated and added to processed. Start of seed to start of
+    // transform1.src is translated and later processed by transform2. End of transform1 to end of
+    // seed is translated and later processed by transform3.
+    //
+    // The intresection in transform2 has no more matches in this section and is put in "processed"
+    // The intresection in transform3 has no more matches in this section and is put in "processed"
+    //
+    // We end up with three ranges that match three transforms. Later we check these ranges in the
+    // next layer until we've gone through all intersecting ranges in all layers. Then it is just a
+    // matter of finding the lowest range.start and that is the lowest/closest location.
     while let Some(seed) = to_process.pop() {
         let maybe_transformation = section.iter().find(|transformation| {
             let intersection = transformation.intersection(&seed);
@@ -102,15 +122,16 @@ fn transform_seed(seed: Range<isize>, section: &Vec<Transform>) -> Vec<Range<isi
 
         // Handle case where seed starts before intesection. Make a range from seed start to
         // transformation start and handle as a new seed to process through the current section.
+        // This could potentially match more transforms in the current section.
         // ....|-----| (transform src)
         // ..|----| (seed)
         if seed.start < transformation.src.start {
             to_process.push(seed.start..transformation.src.start - 1)
         }
 
-        // Handle case where seed ends after intesection, process as a separate seed. Make a range
-        // from transformation end to seed end and handle as a new seed to process through the
-        // current section.
+        // Handle case where seed ends after intesection. Make a range from transformation end to
+        // seed end and handle as a new seed to process through the current section.
+        // This could potentially match more transforms in the current section.
         // ..|----| (transform src)
         // ....|-----| (seed)
         if seed.end > transformation.src.end {
