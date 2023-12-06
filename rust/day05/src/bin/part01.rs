@@ -1,5 +1,3 @@
-use std::collections::HashMap;
-
 use anyhow::Result;
 use itertools::Itertools;
 
@@ -28,26 +26,25 @@ fn find_location(seed: usize, ranges: &Vec<Range>) -> usize {
 
 fn process(input: &str) -> Result<String> {
     let (seeds_raw, maps_raw) = input.split_once("\n\n").unwrap();
-    let mut maps = HashMap::new();
+    let maps = maps_raw
+        .split("\n\n")
+        .map(|map| {
+            let ranges = map
+                .lines()
+                .skip(1)
+                .map(|line| {
+                    let mut iter = line.split(" ");
+                    let dst = iter.next().unwrap().parse::<usize>().unwrap();
+                    let src = iter.next().unwrap().parse::<usize>().unwrap();
+                    let range = iter.next().unwrap().parse::<usize>().unwrap();
 
-    maps_raw.split("\n\n").for_each(|map| {
-        let (id, _) = map.lines().nth(0).unwrap().split_once(" ").unwrap();
+                    Range { src, dst, range }
+                })
+                .collect_vec();
 
-        let ranges = map
-            .lines()
-            .skip(1)
-            .map(|line| {
-                let mut iter = line.split(" ");
-                let dst = iter.next().unwrap().parse::<usize>().unwrap();
-                let src = iter.next().unwrap().parse::<usize>().unwrap();
-                let range = iter.next().unwrap().parse::<usize>().unwrap();
-
-                Range { src, dst, range }
-            })
-            .collect_vec();
-
-        maps.insert(id, ranges);
-    });
+            ranges
+        })
+        .collect_vec();
 
     let seeds = seeds_raw
         .split_once("seeds: ")
@@ -57,21 +54,16 @@ fn process(input: &str) -> Result<String> {
         .map(|s| s.parse::<usize>().unwrap())
         .collect_vec();
 
-    for ranges in maps.get("humidity-to-location").unwrap() {}
-
-    let closest = seeds
-        .iter()
-        .map(|seed| find_location(*seed, maps.get("seed-to-soil").unwrap()))
-        .map(|soil| find_location(soil, maps.get("soil-to-fertilizer").unwrap()))
-        .map(|fertilizer| find_location(fertilizer, maps.get("fertilizer-to-water").unwrap()))
-        .map(|water| find_location(water, maps.get("water-to-light").unwrap()))
-        .map(|light| find_location(light, maps.get("light-to-temperature").unwrap()))
-        .map(|temperature| find_location(temperature, maps.get("temperature-to-humidity").unwrap()))
-        .map(|humidity| find_location(humidity, maps.get("humidity-to-location").unwrap()))
+    let min = seeds
+        .into_iter()
+        .map(|seed| {
+            maps.iter()
+                .fold(seed, |prev, values| find_location(prev, values))
+        })
         .min()
         .unwrap();
 
-    Ok(closest.to_string())
+    Ok(min.to_string())
 }
 
 #[test]
