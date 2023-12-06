@@ -1,4 +1,5 @@
-use std::{collections::HashMap, ops::Range};
+use std::cmp;
+use std::ops::Range;
 
 use anyhow::Result;
 use itertools::Itertools;
@@ -10,80 +11,118 @@ fn main() {
 }
 
 #[derive(Debug)]
-struct SeedRange {
-    src: usize,
-    dst: usize,
-    len: usize,
+struct Transform {
+    src: Range<isize>,
+    dst: Range<isize>,
 }
 
-fn find_location(seed: usize, ranges: &Vec<SeedRange>) -> usize {
-    for range in ranges {
-        let diff = range.dst as isize - range.src as isize;
-        if seed >= range.src && seed <= (range.src + range.len) {
-            return (seed as isize + diff) as usize;
-        }
+impl Transform {
+    fn intersection(&self, seed: &Range<isize>) -> Range<isize> {
+        cmp::max(seed.start, self.src.start)..cmp::min(seed.end, self.src.end)
     }
-    seed
 }
 
 fn process(input: &str) -> Result<String> {
     let (seeds_raw, maps_raw) = input.split_once("\n\n").unwrap();
-    let mut maps = HashMap::new();
+    let maps = maps_raw
+        .split("\n\n")
+        .map(|map| {
+            let ranges = map
+                .lines()
+                .skip(1)
+                .map(|line| {
+                    let mut iter = line.split(" ");
+                    let dst = iter.next().unwrap().parse::<isize>().unwrap();
+                    let src = iter.next().unwrap().parse::<isize>().unwrap();
+                    let len = iter.next().unwrap().parse::<isize>().unwrap();
 
-    maps_raw.split("\n\n").for_each(|map| {
-        let (id, _) = map.lines().nth(0).unwrap().split_once(" ").unwrap();
+                    Transform {
+                        src: (src..src + len),
+                        dst: (dst..dst + len),
+                    }
+                })
+                .collect_vec();
 
-        let ranges = map
-            .lines()
-            .skip(1)
-            .map(|line| {
-                let mut iter = line.split(" ");
-                let dst = iter.next().unwrap().parse::<usize>().unwrap();
-                let src = iter.next().unwrap().parse::<usize>().unwrap();
-                let range = iter.next().unwrap().parse::<usize>().unwrap();
-
-                SeedRange {
-                    src,
-                    dst,
-                    len: range,
-                }
-            })
-            .collect_vec();
-
-        maps.insert(id, ranges);
-    });
+            ranges
+        })
+        .collect_vec();
 
     let seeds = seeds_raw
         .split_once("seeds: ")
         .unwrap()
         .1
         .split(" ")
-        .map(|s| s.parse::<usize>().unwrap())
+        .map(|s| s.parse::<isize>().unwrap())
         .collect_vec();
-    let closest = seeds
-        .chunks(2)
-        .flat_map(|c| (c[0]..c[0] + c[1]))
-        .map(|seed| find_location(seed, maps.get("seed-to-soil").unwrap()))
-        .map(|soil| find_location(soil, maps.get("soil-to-fertilizer").unwrap()))
-        .map(|fertilizer| find_location(fertilizer, maps.get("fertilizer-to-water").unwrap()))
-        .map(|water| find_location(water, maps.get("water-to-light").unwrap()))
-        .map(|light| find_location(light, maps.get("light-to-temperature").unwrap()))
-        .map(|temperature| find_location(temperature, maps.get("temperature-to-humidity").unwrap()))
-        .map(|humidity| find_location(humidity, maps.get("humidity-to-location").unwrap()))
-        .min()
-        .unwrap();
 
-    Ok(closest.to_string())
-    // Ok("".to_string())
+    let mut ranges = seeds
+        .chunks(2)
+        .map(|chunk| (chunk[0]..chunk[0] + chunk[1]))
+        .collect_vec();
+
+    for section in maps {
+        ranges = ranges
+            .into_iter()
+            .flat_map(|seed| transform_seed(seed, &section))
+            .collect();
+    }
+    let min = ranges.iter().map(|range| range.start).min().unwrap();
+    Ok(min.to_string())
 }
 
-// seed: (79..93)
-// soil: (98..100) => (50..52), (50..98) => (52..100)
-// fert: (52..54) => (37..39)
-// wate: (25..95) => (18..88)
-// ligh: (77..100) => (45..68), (45..64) => (81..100), (64..77) => (68..81)
-// temp: (69..70) => (0..1), (0..69) => (1..70)
-// humi: (56..93) => (60..97)
+fn transform_seed(seed: Range<isize>, section: &Vec<Transform>) -> Vec<Range<isize>> {
+    let mut processed = vec![];
+    let mut to_process = vec![seed];
+
+    // Idea is to check if the seed range intersects with any of the transformations of this
+    // section. If it does, that range is translated and added to "processed" (which will later be
+    // paseed to the next section).
+    // Then we also check if the seed started before and/or after the intersection, and try to find
+    // intersecting transformations for those ranges too.
+    while let Some(seed) = to_process.pop() {
+        let maybe_transformation = section.iter().find(|transformation| {
+            let intersection = transformation.intersection(&seed);
+            !intersection.is_empty()
+        });
+
+        if maybe_transformation.is_none() {
+            // no intersecting transformation found for this section, so not
+            // transformation/translation to do - pass on to next layer
+            processed.push(seed);
+            continue;
+        }
+
+        let transformation = maybe_transformation.unwrap();
+        let offset = transformation.dst.start - transformation.src.start;
+
+        // Translate the parts of the ranges that overlapped (the intersection)
+        // transform src -> dst
+        let intersection = transformation.intersection(&seed);
+        processed.push(intersection.start + offset..intersection.end + offset);
+
+        // Handle case where seed starts before intesection. Make a range from seed start to
+        // transformation start and handle as a new seed to process through the current section.
+        // ....|-----| (transform src)
+        // ..|----| (seed)
+        if seed.start < transformation.src.start {
+            to_process.push(seed.start..transformation.src.start - 1)
+        }
+
+        // Handle case where seed ends after intesection, process as a separate seed. Make a range
+        // from transformation end to seed end and handle as a new seed to process through the
+        // current section.
+        // ..|----| (transform src)
+        // ....|-----| (seed)
+        if seed.end > transformation.src.end {
+            to_process.push(transformation.src.end + 1..seed.end)
+        }
+    }
+
+    processed
+}
+
+// 98..100 => 50..52
+// 50..98 => 52..100
 #[test]
 fn it_works() {
     let input = r#"seeds: 79 14 55 13
